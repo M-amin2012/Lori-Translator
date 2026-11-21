@@ -1,0 +1,100 @@
+name: Build Lorvazhe APK
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android platform packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare the web app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "lorvazhe.html" ]; then
+            echo "::error::lorvazhe.html was not found in the repository root. Add the main Lorvazhe HTML file and run the workflow again."
+            exit 1
+          fi
+
+          mkdir -p www
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='node_modules/' \
+            --exclude='android/' \
+            --exclude='www/' \
+            --exclude='*.py' \
+            --exclude='*.md' \
+            --exclude='lorvazhe.html' \
+            ./ www/
+          cp lorvazhe.html www/index.html
+
+          if ! grep -qi '<head' www/index.html; then
+            echo "::error::The HTML file must contain a <head> element for Capacitor."
+            exit 1
+          fi
+
+      - name: Install Capacitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package.json ]; then
+            npm init -y
+          fi
+
+          npm install --save-exact @capacitor/core@8 @capacitor/android@8
+          npm install --save-dev --save-exact @capacitor/cli@8
+
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.arvingeravand.lorvazheh",
+            "appName": "لُرواژه",
+            "webDir": "www"
+          }
+          EOF
+
+          npx cap add android
+          npx cap sync android
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build debug APK
+        run: |
+          cd android
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: Lorvazhe-debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
